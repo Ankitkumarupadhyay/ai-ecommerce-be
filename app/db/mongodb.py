@@ -152,6 +152,7 @@ class MockDatabase:
         self.carts = MockCollection("carts")
         self.orders = MockCollection("orders")
         self.webhook_events = MockCollection("webhook_events")
+        self.ai_chat_logs = MockCollection("ai_chat_logs")
 
 mock_db = MockDatabase()
 

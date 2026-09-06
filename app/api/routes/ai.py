@@ -1,18 +1,24 @@
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Header, Request
 from typing import Optional
 from app.core.security import decode_access_token
 from app.schemas.ai import AIChatRequest, AIChatResponse
 from app.ai.agent import ai_assistant
+from app.services.chat_log_service import chat_log_service
 
 router = APIRouter(prefix="/ai", tags=["AI"])
 
+
 @router.post("/chat", response_model=AIChatResponse)
 async def ai_chat(
-    request: AIChatRequest,
-    authorization: Optional[str] = Header(None)
+    body: AIChatRequest,
+    request: Request,
+    authorization: Optional[str] = Header(None),
 ):
     """
-    AI Support Agent endpoint. Resolves context and securely enforces user order isolation.
+    AI Support Agent endpoint.
+    - Resolves user identity from JWT (if present)
+    - Captures IP, browser, OS, device from request
+    - Persists every Q&A pair to ai_chat_logs collection
     """
     user_id = None
     if authorization and authorization.startswith("Bearer "):
@@ -20,9 +26,21 @@ async def ai_chat(
         payload = decode_access_token(token)
         if payload:
             user_id = payload.get("sub")
-            
-    result = await ai_assistant.process_chat(request.message, user_id=user_id)
+
+    result = await ai_assistant.process_chat(body.message, user_id=user_id)
+
+    # Persist chat log asynchronously (non-blocking to caller)
+    session_id = await chat_log_service.log_chat(
+        question=body.message,
+        response=result["reply"],
+        tools_used=result.get("tools_used", []),
+        session_id=body.session_id,
+        user_id=user_id,
+        request=request,
+    )
+
     return AIChatResponse(
         reply=result["reply"],
-        tools_used=result.get("tools_used", [])
+        tools_used=result.get("tools_used", []),
+        session_id=session_id,
     )

@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Optional
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from app.core.config import settings
-from app.ai.prompts import SYSTEM_PROMPT
+from app.ai.prompts import SYSTEM_PROMPT, OFF_TOPIC_SIGNALS, OFF_TOPIC_REPLY
 from app.ai.tools import (
     get_available_products_tool,
     search_products_tool,
@@ -25,6 +25,10 @@ class AIAssistant:
     async def process_chat(self, message: str, user_id: Optional[str] = None) -> Dict[str, Any]:
         msg_lower = message.lower().strip()
         tools_used = []
+
+        # ── Guardrail: off-topic detection (fast-path, no LLM cost) ────────
+        if any(signal in msg_lower for signal in OFF_TOPIC_SIGNALS):
+            return {"reply": OFF_TOPIC_REPLY, "tools_used": []}
 
         if self.use_openai:
             try:
@@ -116,11 +120,15 @@ class AIAssistant:
             return {"reply": "\n".join(reply_lines), "tools_used": tools_used}
 
         else:
-            tools_used.append("get_available_products")
-            prods_json_str = await get_available_products_tool.ainvoke({"query": ""})
             return {
-                "reply": "I am your AI E-Commerce Assistant. You can ask me about product pricing, stock availability, or check your personal order status!",
-                "tools_used": tools_used
+                "reply": (
+                    "Hi! I'm AuraBot, your AuraStore shopping assistant. "
+                    "I can help you with:\n"
+                    "• 🛍️ Product availability, prices & stock\n"
+                    "• 📦 Your order history & shipping status\n\n"
+                    "What can I help you find today?"
+                ),
+                "tools_used": []
             }
 
 ai_assistant = AIAssistant()
