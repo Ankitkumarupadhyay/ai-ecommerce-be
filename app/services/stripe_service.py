@@ -86,18 +86,21 @@ class StripeService:
             if settings.STRIPE_WEBHOOK_SECRET.startswith("whsec_your_webhook"):
                 # Mock event parsing for dev testing without secret
                 import json
-                event_data = json.loads(payload)
-                event = event_data
+                event = json.loads(payload)
             else:
-                event = stripe.Webhook.construct_event(
+                raw_event = stripe.Webhook.construct_event(
                     payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
                 )
+                event = raw_event.to_dict() if hasattr(raw_event, "to_dict") else raw_event
         except Exception as e:
             logger.error(f"Webhook verification failed: {e}")
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Webhook signature error: {str(e)}")
 
-        event_id = event.get("id")
-        event_type = event.get("type")
+        if hasattr(event, "to_dict"):
+            event = event.to_dict()
+
+        event_id = event.get("id") if isinstance(event, dict) else getattr(event, "id", None)
+        event_type = event.get("type") if isinstance(event, dict) else getattr(event, "type", None)
 
         # Idempotency check using webhook_events collection
         if event_id:
@@ -113,7 +116,8 @@ class StripeService:
             })
 
         if event_type == "checkout.session.completed":
-            session = event["data"]["object"]
+            data_obj = event.get("data", {}).get("object", {}) if isinstance(event, dict) else getattr(getattr(event, "data", None), "object", {})
+            session = data_obj.to_dict() if hasattr(data_obj, "to_dict") else (data_obj if isinstance(data_obj, dict) else {})
             order_id = session.get("client_reference_id") or session.get("metadata", {}).get("order_id")
             payment_intent = session.get("payment_intent", "pi_mock_success")
 
@@ -143,7 +147,8 @@ class StripeService:
                             )
 
         elif event_type in ["payment_intent.payment_failed", "checkout.session.expired"]:
-            session = event["data"]["object"]
+            data_obj = event.get("data", {}).get("object", {}) if isinstance(event, dict) else getattr(getattr(event, "data", None), "object", {})
+            session = data_obj.to_dict() if hasattr(data_obj, "to_dict") else (data_obj if isinstance(data_obj, dict) else {})
             order_id = session.get("client_reference_id") or session.get("metadata", {}).get("order_id")
             if order_id and ObjectId.is_valid(order_id):
                 now = datetime.now(timezone.utc)
@@ -176,6 +181,17 @@ class StripeService:
             return {"message": "Order already marked as paid", "order_id": str(order["_id"])}
 
         now = datetime.now(timezone.utc)
+        mock_event_id = f"evt_mock_{order['_id']}"
+
+        # Record event in webhook_events collection
+        existing_event = await db.webhook_events.find_one({"event_id": mock_event_id})
+        if not existing_event:
+            await db.webhook_events.insert_one({
+                "event_id": mock_event_id,
+                "type": "checkout.session.completed",
+                "processed_at": now
+            })
+
         await db.orders.update_one(
             {"_id": order["_id"]},
             {"$set": {
