@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Header, Request
 from typing import Optional
 from app.core.security import decode_access_token
@@ -5,6 +6,7 @@ from app.schemas.ai import AIChatRequest, AIChatResponse
 from app.ai.agent import ai_assistant
 from app.services.chat_log_service import chat_log_service
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai", tags=["AI"])
 
 
@@ -27,7 +29,17 @@ async def ai_chat(
         if payload:
             user_id = payload.get("sub")
 
+    logger.info(
+        f"📥 [AI CHAT ROUTE] Received User Request | "
+        f"Message: '{body.message}' | User ID: {user_id or 'Anonymous'} | Session ID: {body.session_id}"
+    )
+
     result = await ai_assistant.process_chat(body.message, user_id=user_id)
+
+    logger.info(
+        f"📤 [AI CHAT ROUTE] Returning Response to User | "
+        f"Tools Used: {result.get('tools_used', [])} | Reply Snippet: '{result['reply'][:100]}...'"
+    )
 
     # Persist chat log asynchronously (non-blocking to caller)
     session_id = await chat_log_service.log_chat(
@@ -44,3 +56,4 @@ async def ai_chat(
         tools_used=result.get("tools_used", []),
         session_id=session_id,
     )
+
